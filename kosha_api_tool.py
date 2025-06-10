@@ -22,7 +22,7 @@ def _fetch_law_items(search_keyword: str, category: int) -> List[Dict[str, Any]]
         'searchValue': search_keyword,
         'category': category,
         'numOfRows': 7,
-        'maxPage': 5,
+        'maxPage': 10,
         'lightMode': True,
         'dedup': True,
         'onError': 'fallback'
