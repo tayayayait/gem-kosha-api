@@ -26,7 +26,7 @@ def _fetch_law_items(search_keyword: str, category: int) -> List[Dict[str, Any]]
         'serviceKey': service_key,
         'searchValue': search_keyword,
         'category': category,
-        'numOfRows': 10, # 공식 가이드 예시에 맞춰 10으로 설정 
+        'numOfRows': 40, # 공식 가이드 예시에 맞춰 40으로 설정 
         'pageNo': 1,     # 필수 값이므로 기본값 1로 설정 
     }
 
