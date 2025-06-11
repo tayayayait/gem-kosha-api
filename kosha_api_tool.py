@@ -16,44 +16,48 @@ def _fetch_law_items(search_keyword: str, category: int) -> List[Dict[str, Any]]
         print("API 호출 오류: 서비스 키가 설정되지 않았습니다.")
         return []
 
-    endpoint = "https://kosha-proxy.vercel.app/api/proxy"
+    # [수정 1] 접속 주소를 공식 API 명세에 맞게 변경
+    endpoint = "https://apis.data.go.kr/B552468/srch/smartSearch"
+
+    # [수정 2] 요청 파라미터를 공식 API 명세에 맞게 수정
+    # - 불필요한 파라미터(maxPage, lightMode, dedup, onError) 제거
+    # - 필수 파라미터 'pageNo' 추가
     params = {
         'serviceKey': service_key,
         'searchValue': search_keyword,
         'category': category,
-        'numOfRows': 7,
-        'maxPage': 10,
-        'lightMode': True,
-        'dedup': True,
-        'onError': 'fallback'
+        'numOfRows': 10, # 공식 가이드 예시에 맞춰 10으로 설정 
+        'pageNo': 1,     # 필수 값이므로 기본값 1로 설정 
     }
 
-    # HTTP 413 (Response Too Large) 에러 발생 시 재시도
+    # [수정 3] 프록시 서버에 특화된 413 에러 처리 로직을 일반적인 요청 재시도로 변경
     for attempt in range(3):
         try:
             request_url = f"{endpoint}?{urlencode(params, doseq=True)}"
             response = requests.get(request_url, timeout=20)
 
-            if response.status_code == 413:
-                # 요청당 결과 수를 1씩 줄여서 재시도
-                params['numOfRows'] = max(1, params['numOfRows'] - 1)
-                print(f"응답 용량 초과(413). numOfRows를 {params['numOfRows']}로 줄여 재시도합니다.")
-                time.sleep(1)
-                continue
-
-            response.raise_for_status()
+            response.raise_for_status() # HTTP 오류 발생 시 예외 발생
             data = response.json()
 
+            # 공공데이터 포털의 에러 응답 형식 확인 (OpenAPI_ServiceResponse)
+            if data.get("OpenAPI_ServiceResponse"):
+                header = data.get("OpenAPI_ServiceResponse", {}).get("cmmMsgHeader", {})
+                if header.get("returnReasonCode") != "00":
+                    print(f"API 오류: {header.get('returnAuthMsg')} (코드: {header.get('returnReasonCode')})")
+                    return[]
+
+            # 제공기관의 에러 응답 형식 확인 (response)
             header = data.get("response", {}).get("header", {})
             if header.get("resultCode") != "00":
                 print(f"API 오류: {header.get('resultMsg')} (코드: {header.get('resultCode')})")
                 return []
             
+            # 정상 응답 처리
             return data.get("response", {}).get("body", {}).get("items", {}).get("item", [])
 
         except requests.exceptions.RequestException as e:
-            print(f"네트워크 요청 오류 발생: {e}")
-            return []
+            print(f"네트워크 요청 오류 발생 (시도 {attempt + 1}/3): {e}")
+            time.sleep(1) # 재시도 전 1초 대기
         except json.JSONDecodeError:
             print(f"API 응답 JSON 파싱 오류. 응답: {response.text}")
             return []
@@ -64,17 +68,10 @@ def _fetch_law_items(search_keyword: str, category: int) -> List[Dict[str, Any]]
     print("API 호출 최종 실패.")
     return []
 
-# --- 2. [수정] 단일 카테고리 검색 및 결과 포맷팅 함수 ---
+# --- 2. [수정 없음] 단일 카테고리 검색 및 결과 포맷팅 함수 ---
 def search_safety_laws(search_keyword: str, category: int = 0) -> str:
     """
     지정된 단일 카테고리에서 법규를 검색하고, 결과를 사람이 읽기 좋은 문자열로 반환합니다.
-    
-    Args:
-        search_keyword (str): 검색할 키워드.
-        category (int): 검색할 카테고리 코드 (0: 전체, 1: 법, 2: 시행령 등).
-
-    Returns:
-        str: 검색 결과를 정리한 문자열.
     """
     print(f"'{search_keyword}'에 대한 단일 검색을 시작합니다 (카테고리: {category})...")
     items = _fetch_law_items(search_keyword, category)
@@ -82,7 +79,6 @@ def search_safety_laws(search_keyword: str, category: int = 0) -> str:
     if not items:
         return f"'{search_keyword}'에 대한 검색 결과가 없습니다 (카테고리: {category})."
 
-    # 결과 포맷팅
     total_count = len(items)
     result_text = f"✅ '{search_keyword}' 검색 결과 (카테고리: {category}, 총 {total_count}건)\n\n"
     for i, item in enumerate(items):
@@ -96,17 +92,10 @@ def search_safety_laws(search_keyword: str, category: int = 0) -> str:
 
     return result_text
 
-# --- 3. [수정] 주요 법규 동시 검색 및 결과 종합 함수 ---
+# --- 3. [수정 없음] 주요 법규 동시 검색 및 결과 종합 함수 ---
 def search_main_laws(search_keyword: str) -> str:
     """
     주요 법규(법, 시행령, 규칙)에 대해 순차적으로 검색하고 모든 결과를 종합하여 반환합니다.
-    문서 ID를 기준으로 전체 결과에서 중복을 제거합니다.
-
-    Args:
-        search_keyword (str): 검색할 키워드.
-
-    Returns:
-        str: 여러 법규에서 찾은 결과를 종합하여 정리한 문자열.
     """
     target_categories = {
         1: "산업안전보건법",
@@ -127,7 +116,6 @@ def search_main_laws(search_keyword: str) -> str:
             continue
 
         for item in items:
-            # doc_id가 없거나 이미 본 문서이면 건너뜀
             doc_id = item.get("doc_id")
             if not doc_id or doc_id in seen_doc_ids:
                 continue
@@ -138,7 +126,6 @@ def search_main_laws(search_keyword: str) -> str:
     if not all_results:
         return f"'{search_keyword}'에 대한 주요 법규(법, 시행령, 규칙)에서 검색된 내용이 없습니다."
 
-    # 모든 결과를 종합하여 최종 문자열 생성
     total_count = len(all_results)
     final_text = f"✅ '{search_keyword}'에 대한 주요 법규 종합 검색 결과 (총 {total_count}건)\n\n"
     for i, item in enumerate(all_results):
